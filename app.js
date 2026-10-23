@@ -1,3 +1,6 @@
+'use strict';
+/* senorbak 1.2.2 · reproductor de música (app web instalable) */
+
 const VERSION = '1.2.2';
 const APP = 'senorbak';
 const AUDIUS = ['https://api.audius.co', 'https://discoveryprovider.audius.co'];
@@ -14,26 +17,32 @@ if (typeof I18N !== 'undefined') {
     secYouTubeH: 'Reproduce o descarga el audio completo directamente en la app.',
     dlFromYT: 'Descargar completa (vía YouTube)',
     ytFetching: 'Obteniendo audio de YouTube…',
-    ytBackend: 'Servidor yt-dlp (URL del backend)',
-    ytBackendH: 'Ej.: http://localhost:3000 (en tu PC) o tu URL de Render/Railway.',
     secCatalog: 'Catálogo mundial (Deezer)',
     secCatalogH: 'Avances de 30 s o descárgalas completas vía YouTube con el icono de descarga.',
     secFree: 'Artistas independientes (Audius)',
     secFreeH: 'Canciones completas y gratuitas subidas por sus autores.',
     showMore: 'Mostrar más',
+    searchYouTube: 'Buscar «{q}» en YouTube',
+    srcYouTubeH: 'Resultados completos y descargables desde YouTube.',
+    srcAudiusH: 'Canciones completas de artistas independientes.',
+    srcDeezerH: 'Catálogo mundial con avances de 30 s.',
+    srcJamendoH: 'Música con licencia libre, casi toda descargable.',
   });
   Object.assign(I18N.eu, {
     secYouTube: 'YouTube (osorik eta deskargagarriak)',
     secYouTubeH: 'Erreproduzitu edo deskargatu audio osoa zuzenean aplikazioan.',
     dlFromYT: 'Deskargatu osorik (YouTube bidez)',
     ytFetching: 'YouTube-tik audioa lortzen…',
-    ytBackend: 'yt-dlp zerbitzaria (backend URL-a)',
-    ytBackendH: 'Adib.: http://localhost:3000 edo zure Render/Railway URL-a.',
     secCatalog: 'Munduko katalogoa (Deezer)',
     secCatalogH: '30 s-ko aurrebistak edo deskargatu osorik YouTube bidez.',
     secFree: 'Artista independenteak (Audius)',
     secFreeH: 'Egileek igotako abesti osoak eta doakoak.',
     showMore: 'Erakutsi gehiago',
+    searchYouTube: 'Bilatu «{q}» YouTube-n',
+    srcYouTubeH: 'Emaitza osoak eta deskargagarriak YouTube-tik.',
+    srcAudiusH: 'Artista independenteen abesti osoak.',
+    srcDeezerH: 'Munduko katalogoa, 30 s-ko aurrebistekin.',
+    srcJamendoH: 'Lizentzia libreko musika.'
   });
 }
 
@@ -273,7 +282,6 @@ function jsonp(url, ms = 12000) {
 }
 
 /* ================= buscador de catálogo (Deezer) y YouTube (yt-dlp) ================= */
-/* ================= buscador de catálogo (Deezer) y YouTube ================= */
 async function searchCatalog(q) {
   const j = await jsonp(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25`);
   return reg((j?.data || []).map(fromDeezer).filter((m) => m.preview));
@@ -729,7 +737,7 @@ async function loadAndPlay(autoplay = true, startAt = 0) {
       try {
         const yt = await getYouTubeAudioUrl(m.id);
         if (P.cur()?.key !== m.key) return;
-        url = yt.url;
+        url = yt.urls[0]; // Usamos la URL del proxy
       } catch {
         toast(t('playError'));
         return;
@@ -820,7 +828,8 @@ P.audio.addEventListener('error', async () => {
   if (m.src === 'youtube' && !P.triedAlt) {
     P.triedAlt = true;
     try {
-      P.audio.src = `${backendUrl()}/api/proxy?id=${encodeURIComponent(m.id)}`;
+      const yt = await getYouTubeAudioUrl(m.id);
+      P.audio.src = yt.urls[1] || yt.url; // Intento 2 con la url directa
       P.audio.play().catch(() => {});
       return;
     } catch { /* nada */ }
@@ -1295,7 +1304,7 @@ function fillSection(id, list) {
   $('.scroller', sec).innerHTML = list.map((m, i) => cardHTML(m, 'home:' + id, i)).join('');
 }
 
-/* --- buscar --- */
+/* --- buscar (Carga Asíncrona Paralela) --- */
 function renderSearch() {
   const s = UI.search;
   return `<div class="search-head">
@@ -1321,20 +1330,15 @@ function searchResultsHTML() {
       <div class="tiles">${GENRES.map((g) => `<button class="tile" data-act="genre" data-g="${esc(g)}" style="--tint:${tintFor(g)}"><span>${esc(gLabel(g))}</span></button>`).join('')}</div>
       <p class="fine">${esc(t('sourcesNote'))}</p>`;
   }
+  
   const q = s.q.trim();
-  const ytExtLink = q ? `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div>
-    <p class="sec-sub">${esc(t('srcYouTubeH'))}</p>
-    <a class="yt-row" href="https://www.youtube.com/results?search_query=${encodeURIComponent(q)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('searchYouTube', { q }))}</span>${icon('chevron-right')}</a></section>` : '';
-  if (s.loading && !s.results) return `<p class="muted pad">${esc(t('searching'))}</p>${skeletonRows()}`;
-  if (s.error) return `<div class="empty">${icon('cloud-off')}<p>${esc(navigator.onLine ? t('loadError') : t('needOnline'))}</p><button class="btn" data-act="retry-search">${esc(t('retry'))}</button></div>${ytExtLink}`;
-  const yt = s.results?.yt || [];
-  const free = s.results?.free || [];
-  const au = free.filter((m) => m.src === 'audius');
-  const jm = free.filter((m) => m.src === 'jamendo');
-  const dz = s.results?.catalog || [];
-  if (!yt.length && !au.length && !jm.length && !dz.length) return `<div class="empty">${icon('search')}<p>${esc(t('noResults', { q: q || gLabel(s.genre) }))}</p><p class="muted">${esc(t('noResultsH'))}</p></div>${ytExtLink}`;
+  if (s.error) return `<div class="empty">${icon('cloud-off')}<p>${esc(navigator.onLine ? t('loadError') : t('needOnline'))}</p><button class="btn" data-act="retry-search">${esc(t('retry'))}</button></div>`;
+
   const section = (id, name, sub, list, ctx) => {
-    if (!list.length) return '';
+    // Si la lista es null, está cargando, mostramos los esqueletos (huesos)
+    if (list === null) return `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">${esc(name)}</span></h2></div>${skeletonRows(3)}</section>`;
+    if (!list.length) return ''; // Si cargó y está vacía, no mostramos nada
+    
     const shown = s.open?.[id] ? list : list.slice(0, 8);
     const rows = listHTML(shown, ctx);
     LISTS.set(ctx, list);
@@ -1342,12 +1346,30 @@ function searchResultsHTML() {
       <p class="sec-sub">${esc(sub)}</p>${rows}
       ${list.length > shown.length ? `<button class="btn btn-ghost wide more-btn" data-act="more-src" data-id="${id}">${esc(t('showMore'))}</button>` : ''}</section>`;
   };
-  return section('yt', 'YouTube', t('secYouTubeH'), yt, 'search-yt')
-    + section('au', 'Audius', q ? t('srcAudiusH') : t('trendingIn', { genre: gLabel(s.genre) }), au, 'search')
-    + section('dz', 'Deezer', t('srcDeezerH'), dz, 'search-cat')
-    + section('jm', 'Jamendo', t('srcJamendoH'), jm, 'search-jm')
-    + (yt.length ? '' : ytExtLink);
+
+  // Construimos las secciones independientemente según van llegando los datos
+  const ytHTML = s.genre ? '' : section('yt', 'YouTube', t('secYouTubeH'), s.results?.yt, 'search-yt');
+  const auList = s.results?.free ? s.results.free.filter((m) => m.src === 'audius') : null;
+  const jmList = s.results?.free ? s.results.free.filter((m) => m.src === 'jamendo') : null;
+  const dzList = s.results?.catalog;
+
+  const auHTML = section('au', 'Audius', q ? t('srcAudiusH') : t('trendingIn', { genre: gLabel(s.genre) }), auList, 'search');
+  const dzHTML = (s.onlyDl || s.genre) ? '' : section('dz', 'Deezer', t('srcDeezerH'), dzList, 'search-cat');
+  const jmHTML = section('jm', 'Jamendo', t('srcJamendoH'), jmList, 'search-jm');
+
+  const allDone = s.results?.yt !== null && s.results?.catalog !== null && s.results?.free !== null;
+  const allEmpty = allDone && !(s.results?.yt?.length) && !(dzList?.length) && !(s.results?.free?.length);
+
+  if (allEmpty) {
+    const ytExtLink = q ? `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div>
+      <p class="sec-sub">${esc(t('secYouTubeH'))}</p>
+      <a class="yt-row" href="https://www.youtube.com/results?search_query=${encodeURIComponent(q)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('searchYouTube', { q }))}</span>${icon('chevron-right')}</a></section>` : '';
+    return `<div class="empty">${icon('search')}<p>${esc(t('noResults', { q: q || gLabel(s.genre) }))}</p><p class="muted">${esc(t('noResultsH'))}</p></div>${ytExtLink}`;
+  }
+
+  return ytHTML + auHTML + dzHTML + jmHTML + `<p class="fine">${esc(t('sourcesNote'))}</p>`;
 }
+
 function bindSearch() {
   const inp = $('#q'); if (!inp) return;
   if (!UI.search.q && !UI.search.genre && !UI.searchFocused) { UI.searchFocused = true; }
@@ -1358,45 +1380,76 @@ function bindSearch() {
   });
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); runSearch(true); } });
 }
+
 const debouncedSearch = debounce(() => runSearch(false), 450);
 let searchSeq = 0;
+
 async function runSearch(commit) {
   const s = UI.search;
   const q = s.q.trim();
   const box = $('#results');
-  if (!q && !s.genre) { s.results = null; s.error = false; s.loading = false; if (box) box.innerHTML = searchResultsHTML(); return; }
-  if (q && q.length < 2 && !commit) return;
-  const seq = ++searchSeq;
-  s.loading = true; s.error = false; s.results = null; s.open = {};
-  if (box) box.innerHTML = searchResultsHTML();
-  try {
-    let res;
-    if (q) {
-      const [yt, cat, free] = await Promise.allSettled([
-        s.genre ? Promise.resolve([]) : searchYouTubeAPI(q),
-        s.onlyDl || s.genre ? Promise.resolve([]) : searchCatalog(q),
-        searchSongs(q, { onlyDl: s.onlyDl, genre: s.genre }),
-      ]);
-      if (yt.status === 'rejected' && cat.status === 'rejected' && free.status === 'rejected') throw free.reason || yt.reason;
-      res = { yt: yt.value || [], catalog: cat.value || [], free: free.value || [] };
-    } else {
-      let list = mapAudius(await audius('/tracks/trending', { genre: s.genre, time: 'week', limit: 50 }));
-      if (s.onlyDl) list = list.filter((m) => m.downloadable);
-      res = { yt: [], catalog: [], free: list };
-    }
-    if (seq !== searchSeq) return;
-    s.results = res; s.loading = false;
-    if (q && q.toLowerCase() !== s.lastLogged) {
-      s.lastLogged = q.toLowerCase();
-      logEvent('search', q + (s.genre ? ` [${s.genre}]` : '') + (s.onlyDl ? ' [dl]' : ''));
-      S.lib.recent = [q, ...(S.lib.recent || []).filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 10);
-      saveLib();
-    }
-  } catch {
-    if (seq !== searchSeq) return;
-    s.error = true; s.loading = false;
+  
+  if (!q && !s.genre) { 
+    s.results = null; s.error = false; s.loading = false; 
+    if (box) box.innerHTML = searchResultsHTML(); 
+    return; 
   }
-  if (UI.tab === 'search' && !UI.stack.length) { const b = $('#results'); if (b) b.innerHTML = searchResultsHTML(); }
+  if (q && q.length < 2 && !commit) return;
+  
+  const seq = ++searchSeq;
+  s.loading = true; 
+  s.error = false;
+  // Inicializamos a null para que renderice el estado de "cargando" inmediatamente
+  s.results = { yt: null, catalog: null, free: null };
+  s.open = {};
+  
+  if (box) box.innerHTML = searchResultsHTML();
+
+  const refreshHTML = () => {
+    // Solo recargamos la UI si esta petición es la última activa
+    if (seq !== searchSeq || UI.tab !== 'search') return;
+    const b = $('#results'); if (b) b.innerHTML = searchResultsHTML();
+  };
+
+  if (q) {
+    // 1. YouTube asíncrono
+    if (!s.genre) {
+      searchYouTubeAPI(q).then(r => { s.results.yt = r || []; refreshHTML(); })
+        .catch(() => { s.results.yt = []; refreshHTML(); });
+    } else {
+      s.results.yt = []; refreshHTML();
+    }
+
+    // 2. Deezer asíncrono
+    if (!s.onlyDl && !s.genre) {
+      searchCatalog(q).then(r => { s.results.catalog = r || []; refreshHTML(); })
+        .catch(() => { s.results.catalog = []; refreshHTML(); });
+    } else {
+      s.results.catalog = []; refreshHTML();
+    }
+
+    // 3. Audius y Jamendo asíncronos
+    searchSongs(q, { onlyDl: s.onlyDl, genre: s.genre })
+      .then(r => { s.results.free = r || []; refreshHTML(); })
+      .catch(() => { s.results.free = []; refreshHTML(); });
+
+  } else {
+    // Búsqueda por género (Trending)
+    s.results.yt = []; 
+    s.results.catalog = [];
+    audius('/tracks/trending', { genre: s.genre, time: 'week', limit: 50 }).then(mapAudius).then(list => {
+      s.results.free = s.onlyDl ? list.filter((m) => m.downloadable) : list;
+      refreshHTML();
+    }).catch(() => { s.results.free = []; refreshHTML(); });
+  }
+
+  // Guardar en búsquedas recientes
+  if (q && q.toLowerCase() !== s.lastLogged) {
+    s.lastLogged = q.toLowerCase();
+    logEvent('search', q + (s.genre ? ` [${s.genre}]` : '') + (s.onlyDl ? ' [dl]' : ''));
+    S.lib.recent = [q, ...(S.lib.recent || []).filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 10);
+    saveLib();
+  }
 }
 
 /* --- top --- */
@@ -1412,7 +1465,7 @@ function renderTop() {
         <button class="icon-btn outline" data-act="refresh-top" aria-label="${esc(t('refresh'))}">${icon('refresh')}</button>
       </div>
     </div>
-    ${c.src === 'deezer' ? `<p class="notice slim">${icon('download')}<span>${esc(t('topNote'))}</span></p>` : `<p class="notice slim">${esc(t('topFallback'))}</p>`}
+    ${c.src === 'deezer' ? `<p class="notice slim">${icon('download')}<span>${esc(t('secCatalogH'))}</span></p>` : `<p class="notice slim">${esc(t('topFallback'))}</p>`}
     ${listHTML(c.items, 'top', { rank: true })}
     <p class="fine">${esc(c.src === 'deezer' ? t('topSource') : t('topSourceAudius'))}</p>`;
 }
@@ -1500,7 +1553,7 @@ function renderSettings() {
     <div class="group">
       <button class="set-row link-row" data-act="open-admin"><span>${icon('shield')}${esc(t('adminPanel'))}</span>${icon('chevron-right')}</button>
       <div class="set-row"><span>${esc(t('topInterval'))}</span><div class="seg sm">${[1, 6, 12, 24].map((h) => segBtn('set-chart-h', String(h), String(S.settings.chartHours), t('hours', { n: h }))).join('')}</div></div>
-      <div class="set-col"><label for="set-yt">${esc(t('ytBackend'))}</label><input class="input" id="set-yt" placeholder="${esc(MY_BACKEND)}" value="${esc(S.settings.ytApi || '')}" autocomplete="off" spellcheck="false"><small class="muted">${esc(t('ytBackendH'))}</small></div>
+      <div class="set-col"><label for="set-yt">Servidor yt-dlp (URL backend)</label><input class="input" id="set-yt" placeholder="${esc(MY_BACKEND)}" value="${esc(S.settings.ytApi || '')}" autocomplete="off" spellcheck="false"><small class="muted">Ej: https://tu-backend.onrender.com</small></div>
       <div class="set-col"><label for="set-jam">${esc(t('jamendo'))}</label><input class="input" id="set-jam" value="${esc(S.settings.jamendoId)}" autocomplete="off" spellcheck="false"><small class="muted">${esc(t('jamendoH'))}</small></div>
     </div>` : ''}
     <div class="group">
@@ -1727,7 +1780,6 @@ function openTrackMenu(k, ctx, i) {
   } else {
     items.push(`<div class="sheet-item disabled">${icon('lock')}<span>${esc(t('notDownloadable'))}</span></div>`);
   }
-  if (m.src === 'deezer') items.push(...fullLinks(m).map(([n, u]) => `<a class="sheet-item" href="${esc(u)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('listenFullIn', { app: n }))}</span></a>`));
   if (ctx && ctx.startsWith('pl:')) {
     const pid = ctx.slice(3);
     const extra = `${kk} data-pid="${pid}" data-i="${i}"`;
@@ -1738,6 +1790,7 @@ function openTrackMenu(k, ctx, i) {
   if (m.src === 'deezer') items.push(sheetBtn('m-findfree', 'search', t('findFree'), kk));
   if (m.src === 'own') items.push(sheetBtn('m-delown', 'trash', t('deleteSong'), kk));
   if (m.link && m.src !== 'own' && m.src !== 'deezer') items.push(`<a class="sheet-item" href="${esc(m.link)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('openIn', { src: { audius: 'Audius', deezer: 'Deezer', jamendo: 'Jamendo', youtube: 'YouTube' }[m.src] || m.src }))}</span></a>`);
+  if (m.src === 'deezer') items.push(...fullLinks(m).map(([n, u]) => `<a class="sheet-item" href="${esc(u)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('listenFullIn', { app: n }))}</span></a>`));
   openSheet('track-sheet', sheetHead(m) + items.join(''));
 }
 function playlistPicker(k) {
@@ -1860,13 +1913,13 @@ const ACT = {
     S.lib.playlists = S.lib.playlists.filter((x) => x.id !== p.id); saveLib();
     await closeTop();
   },
+  'more-src': (el) => { UI.search.open = { ...(UI.search.open || {}), [el.dataset.id]: true }; const b = $('#results'); if (b) b.innerHTML = searchResultsHTML(); },
   'toggle-onlydl': () => { UI.search.onlyDl = !UI.search.onlyDl; renderView(); runSearch(true); },
   genre: (el) => { UI.search.genre = el.dataset.g; if (UI.tab !== 'search') UI.tab = 'search'; renderView(false); runSearch(true); },
   'clear-q': () => { UI.search.q = ''; UI.search.results = null; renderView(); $('#q')?.focus(); runSearch(true); },
   'recent-q': (el) => { UI.search.q = el.dataset.q; renderView(); runSearch(true); },
   'clear-recent': () => { S.lib.recent = []; saveLib(); renderView(); },
   'retry-search': () => runSearch(true),
-  'more-src': (el) => { UI.search.open = { ...(UI.search.open || {}), [el.dataset.id]: true }; const b = $('#results'); if (b) b.innerHTML = searchResultsHTML(); },
   'retry-home': () => { renderView(); },
   'refresh-top': async (el) => { el.classList.add('spin'); await refreshChart(true); renderView(); },
   'open-settings': () => { if (UI.stack[UI.stack.length - 1]?.type === 'settings') return; openPage({ type: 'settings' }); },
@@ -1933,7 +1986,7 @@ function ctxLabel(ctx) {
   if (ctx.startsWith('home:')) { const s = homeSecs.find((x) => 'home:' + x.id === ctx); return s ? s.title : t('tab_home'); }
   if (ctx.startsWith('pl:')) return S.lib.playlists.find((p) => p.id === ctx.slice(3))?.name || t('playlists');
   if (ctx.startsWith('search')) return UI.search.q ? `«${UI.search.q}»` : t('tab_search');
-  return { search: UI.search.q ? `«${UI.search.q}»` : t('tab_search'), top: t('topTitle'), favs: t('favorites'), downloads: t('downloads'), own: t('myMusic'), queue: t('queue') }[ctx] || '';
+  return { search: UI.search.q ? `«${UI.search.q}»` : t('tab_search'), 'search-yt': UI.search.q ? `«${UI.search.q}»` : t('tab_search'), 'search-cat': UI.search.q ? `«${UI.search.q}»` : t('tab_search'), top: t('topTitle'), favs: t('favorites'), downloads: t('downloads'), own: t('myMusic'), queue: t('queue') }[ctx] || '';
 }
 
 document.addEventListener('click', (e) => {
