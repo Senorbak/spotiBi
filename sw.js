@@ -1,5 +1,6 @@
+
 /* senorbak · service worker: la app funciona sin conexión */
-const VERSION = 'senorbak-v1.2.2';
+const VERSION = 'senorbak-v1.3.0';
 const FONT_CACHE = 'senorbak-fonts';
 const SHELL = ['./', './index.html', './app.css', './app.js', './i18n.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable.png'];
 
