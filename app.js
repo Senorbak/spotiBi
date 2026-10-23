@@ -8,7 +8,10 @@ let audiusBase = AUDIUS[0];
 
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
+  'https://pipedapi.smnz.de',
   'https://pipedapi.tokhmi.xyz',
+  'https://pipedapi.syncpundit.io',
+  'https://api.piped.projectsegfau.lt',
   'https://pipedapi.moomoo.me',
   'https://pipedapi-libre.kavin.rocks',
   'https://api.piped.private.coffee',
@@ -16,9 +19,12 @@ const PIPED_INSTANCES = [
   'https://pipedapi.drgns.space'
 ];
 const INVIDIOUS_INSTANCES = [
+  'https://inv.tux.pizza',
+  'https://invidious.asir.dev',
   'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
   'https://invidious.privacyredirect.com',
+  'https://iv.ggtyler.dev',
   'https://iv.datura.network'
 ];
 let pipedBase = PIPED_INSTANCES[0];
@@ -295,7 +301,7 @@ async function pipedFetch(path) {
   for (const base of [...new Set(list)]) {
     try {
       const clean = base.replace(/\/+$/, '');
-      const j = await fetchJSON(`${clean}${path}`, 9000);
+      const j = await fetchJSON(`${clean}${path}`, 5000);
       pipedBase = clean;
       return j;
     } catch (e) { err = e; }
@@ -309,7 +315,7 @@ async function invidiousFetch(path) {
   for (const base of [...new Set(list)]) {
     try {
       const clean = base.replace(/\/+$/, '');
-      const j = await fetchJSON(`${clean}/api/v1${path}`, 9000);
+      const j = await fetchJSON(`${clean}/api/v1${path}`, 5000);
       invidiousBase = clean;
       return { data: j, base: clean };
     } catch (e) { err = e; }
