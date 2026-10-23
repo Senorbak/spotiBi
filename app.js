@@ -1,7 +1,7 @@
 'use strict';
-/* senorbak 1.2.2 · reproductor de música (app web instalable) */
+/* senorbak 1.3.0 · reproductor de música (app web instalable) */
 
-const VERSION = '1.2.2';
+const VERSION = '1.3.0';
 const APP = 'senorbak';
 const AUDIUS = ['https://api.audius.co', 'https://discoveryprovider.audius.co'];
 let audiusBase = AUDIUS[0];
@@ -10,7 +10,7 @@ let audiusBase = AUDIUS[0];
 const MY_BACKEND = 'http://localhost:3000';
 const backendUrl = () => (S.settings?.ytApi || MY_BACKEND).replace(/\/+$/, '');
 
-/* ================= inyección de textos y estilos v1.2 ================= */
+/* ================= inyección de textos y estilos ================= */
 if (typeof I18N !== 'undefined') {
   Object.assign(I18N.es, {
     secYouTube: 'YouTube (completas y descargables)',
@@ -737,7 +737,7 @@ async function loadAndPlay(autoplay = true, startAt = 0) {
       try {
         const yt = await getYouTubeAudioUrl(m.id);
         if (P.cur()?.key !== m.key) return;
-        url = yt.urls[0]; // Usamos la URL del proxy
+        url = yt.urls[0]; // Usamos la URL del proxy para evitar CORS
       } catch {
         toast(t('playError'));
         return;
@@ -1304,7 +1304,7 @@ function fillSection(id, list) {
   $('.scroller', sec).innerHTML = list.map((m, i) => cardHTML(m, 'home:' + id, i)).join('');
 }
 
-/* --- buscar (Carga Asíncrona Paralela) --- */
+/* --- buscar --- */
 function renderSearch() {
   const s = UI.search;
   return `<div class="search-head">
@@ -1320,6 +1320,7 @@ function renderSearch() {
     </div>
     <div id="results">${searchResultsHTML()}</div>`;
 }
+
 function searchResultsHTML() {
   const s = UI.search;
   if (!s.q && !s.genre) {
@@ -1330,15 +1331,14 @@ function searchResultsHTML() {
       <div class="tiles">${GENRES.map((g) => `<button class="tile" data-act="genre" data-g="${esc(g)}" style="--tint:${tintFor(g)}"><span>${esc(gLabel(g))}</span></button>`).join('')}</div>
       <p class="fine">${esc(t('sourcesNote'))}</p>`;
   }
-  
+
   const q = s.q.trim();
   if (s.error) return `<div class="empty">${icon('cloud-off')}<p>${esc(navigator.onLine ? t('loadError') : t('needOnline'))}</p><button class="btn" data-act="retry-search">${esc(t('retry'))}</button></div>`;
 
   const section = (id, name, sub, list, ctx) => {
-    // Si la lista es null, está cargando, mostramos los esqueletos (huesos)
     if (list === null) return `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">${esc(name)}</span></h2></div>${skeletonRows(3)}</section>`;
-    if (!list.length) return ''; // Si cargó y está vacía, no mostramos nada
-    
+    if (!list.length) return '';
+
     const shown = s.open?.[id] ? list : list.slice(0, 8);
     const rows = listHTML(shown, ctx);
     LISTS.set(ctx, list);
@@ -1347,7 +1347,6 @@ function searchResultsHTML() {
       ${list.length > shown.length ? `<button class="btn btn-ghost wide more-btn" data-act="more-src" data-id="${id}">${esc(t('showMore'))}</button>` : ''}</section>`;
   };
 
-  // Construimos las secciones independientemente según van llegando los datos
   const ytHTML = s.genre ? '' : section('yt', 'YouTube', t('secYouTubeH'), s.results?.yt, 'search-yt');
   const auList = s.results?.free ? s.results.free.filter((m) => m.src === 'audius') : null;
   const jmList = s.results?.free ? s.results.free.filter((m) => m.src === 'jamendo') : null;
@@ -1380,7 +1379,6 @@ function bindSearch() {
   });
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); runSearch(true); } });
 }
-
 const debouncedSearch = debounce(() => runSearch(false), 450);
 let searchSeq = 0;
 
@@ -1388,31 +1386,28 @@ async function runSearch(commit) {
   const s = UI.search;
   const q = s.q.trim();
   const box = $('#results');
-  
-  if (!q && !s.genre) { 
-    s.results = null; s.error = false; s.loading = false; 
-    if (box) box.innerHTML = searchResultsHTML(); 
-    return; 
+
+  if (!q && !s.genre) {
+    s.results = null; s.error = false; s.loading = false;
+    if (box) box.innerHTML = searchResultsHTML();
+    return;
   }
   if (q && q.length < 2 && !commit) return;
-  
+
   const seq = ++searchSeq;
-  s.loading = true; 
+  s.loading = true;
   s.error = false;
-  // Inicializamos a null para que renderice el estado de "cargando" inmediatamente
   s.results = { yt: null, catalog: null, free: null };
   s.open = {};
-  
+
   if (box) box.innerHTML = searchResultsHTML();
 
   const refreshHTML = () => {
-    // Solo recargamos la UI si esta petición es la última activa
     if (seq !== searchSeq || UI.tab !== 'search') return;
     const b = $('#results'); if (b) b.innerHTML = searchResultsHTML();
   };
 
   if (q) {
-    // 1. YouTube asíncrono
     if (!s.genre) {
       searchYouTubeAPI(q).then(r => { s.results.yt = r || []; refreshHTML(); })
         .catch(() => { s.results.yt = []; refreshHTML(); });
@@ -1420,7 +1415,6 @@ async function runSearch(commit) {
       s.results.yt = []; refreshHTML();
     }
 
-    // 2. Deezer asíncrono
     if (!s.onlyDl && !s.genre) {
       searchCatalog(q).then(r => { s.results.catalog = r || []; refreshHTML(); })
         .catch(() => { s.results.catalog = []; refreshHTML(); });
@@ -1428,14 +1422,12 @@ async function runSearch(commit) {
       s.results.catalog = []; refreshHTML();
     }
 
-    // 3. Audius y Jamendo asíncronos
     searchSongs(q, { onlyDl: s.onlyDl, genre: s.genre })
       .then(r => { s.results.free = r || []; refreshHTML(); })
       .catch(() => { s.results.free = []; refreshHTML(); });
 
   } else {
-    // Búsqueda por género (Trending)
-    s.results.yt = []; 
+    s.results.yt = [];
     s.results.catalog = [];
     audius('/tracks/trending', { genre: s.genre, time: 'week', limit: 50 }).then(mapAudius).then(list => {
       s.results.free = s.onlyDl ? list.filter((m) => m.downloadable) : list;
@@ -1443,7 +1435,6 @@ async function runSearch(commit) {
     }).catch(() => { s.results.free = []; refreshHTML(); });
   }
 
-  // Guardar en búsquedas recientes
   if (q && q.toLowerCase() !== s.lastLogged) {
     s.lastLogged = q.toLowerCase();
     logEvent('search', q + (s.genre ? ` [${s.genre}]` : '') + (s.onlyDl ? ' [dl]' : ''));
@@ -1985,8 +1976,8 @@ function ctxLabel(ctx) {
   if (!ctx) return '';
   if (ctx.startsWith('home:')) { const s = homeSecs.find((x) => 'home:' + x.id === ctx); return s ? s.title : t('tab_home'); }
   if (ctx.startsWith('pl:')) return S.lib.playlists.find((p) => p.id === ctx.slice(3))?.name || t('playlists');
-  if (ctx.startsWith('search')) return UI.search.q ? `«${UI.search.q}»` : t('tab_search');
-  return { search: UI.search.q ? `«${UI.search.q}»` : t('tab_search'), 'search-yt': UI.search.q ? `«${UI.search.q}»` : t('tab_search'), 'search-cat': UI.search.q ? `«${UI.search.q}»` : t('tab_search'), top: t('topTitle'), favs: t('favorites'), downloads: t('downloads'), own: t('myMusic'), queue: t('queue') }[ctx] || '';
+  const qLabel = UI.search.q ? `«${UI.search.q}»` : t('tab_search');
+  return { search: qLabel, 'search-yt': qLabel, 'search-cat': qLabel, top: t('topTitle'), favs: t('favorites'), downloads: t('downloads'), own: t('myMusic'), queue: t('queue') }[ctx] || '';
 }
 
 document.addEventListener('click', (e) => {
