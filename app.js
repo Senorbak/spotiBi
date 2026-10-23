@@ -1,7 +1,4 @@
-'use strict';
-/* senorbak 1.2 · reproductor de música (app web instalable) */
-
-const VERSION = '1.2.0';
+const VERSION = '1.2.2';
 const APP = 'senorbak';
 const AUDIUS = ['https://api.audius.co', 'https://discoveryprovider.audius.co'];
 let audiusBase = AUDIUS[0];
@@ -10,23 +7,33 @@ let audiusBase = AUDIUS[0];
 const MY_BACKEND = 'http://localhost:3000';
 const backendUrl = () => (S.settings?.ytApi || MY_BACKEND).replace(/\/+$/, '');
 
-/* ================= respaldo de textos v1.2 ================= */
+/* ================= inyección de textos y estilos v1.2 ================= */
 if (typeof I18N !== 'undefined') {
   Object.assign(I18N.es, {
-    secYouTube: I18N.es.secYouTube || 'YouTube (completas y descargables)',
-    secYouTubeH: I18N.es.secYouTubeH || 'Reproduce o descarga el audio directamente en la app.',
-    dlFromYT: I18N.es.dlFromYT || 'Descargar completa (vía YouTube)',
-    ytFetching: I18N.es.ytFetching || 'Obteniendo audio de YouTube…',
-    ytBackend: I18N.es.ytBackend || 'Servidor yt-dlp (URL del backend)',
-    ytBackendH: I18N.es.ytBackendH || 'Ej.: http://localhost:3000 o tu URL de Render/Railway.',
+    secYouTube: 'YouTube (completas y descargables)',
+    secYouTubeH: 'Reproduce o descarga el audio completo directamente en la app.',
+    dlFromYT: 'Descargar completa (vía YouTube)',
+    ytFetching: 'Obteniendo audio de YouTube…',
+    ytBackend: 'Servidor yt-dlp (URL del backend)',
+    ytBackendH: 'Ej.: http://localhost:3000 (en tu PC) o tu URL de Render/Railway.',
+    secCatalog: 'Catálogo mundial (Deezer)',
+    secCatalogH: 'Avances de 30 s o descárgalas completas vía YouTube con el icono de descarga.',
+    secFree: 'Artistas independientes (Audius)',
+    secFreeH: 'Canciones completas y gratuitas subidas por sus autores.',
+    showMore: 'Mostrar más',
   });
   Object.assign(I18N.eu, {
-    secYouTube: I18N.eu.secYouTube || 'YouTube (osorik eta deskargagarriak)',
-    secYouTubeH: I18N.eu.secYouTubeH || 'Erreproduzitu edo deskargatu audioa zuzenean aplikazioan.',
-    dlFromYT: I18N.eu.dlFromYT || 'Deskargatu osorik (YouTube bidez)',
-    ytFetching: I18N.eu.ytFetching || 'YouTube-tik audioa lortzen…',
-    ytBackend: I18N.eu.ytBackend || 'yt-dlp zerbitzaria (backend URL-a)',
-    ytBackendH: I18N.eu.ytBackendH || 'Adib.: http://localhost:3000 edo zure Render/Railway URL-a.',
+    secYouTube: 'YouTube (osorik eta deskargagarriak)',
+    secYouTubeH: 'Erreproduzitu edo deskargatu audio osoa zuzenean aplikazioan.',
+    dlFromYT: 'Deskargatu osorik (YouTube bidez)',
+    ytFetching: 'YouTube-tik audioa lortzen…',
+    ytBackend: 'yt-dlp zerbitzaria (backend URL-a)',
+    ytBackendH: 'Adib.: http://localhost:3000 edo zure Render/Railway URL-a.',
+    secCatalog: 'Munduko katalogoa (Deezer)',
+    secCatalogH: '30 s-ko aurrebistak edo deskargatu osorik YouTube bidez.',
+    secFree: 'Artista independenteak (Audius)',
+    secFreeH: 'Egileek igotako abesti osoak eta doakoak.',
+    showMore: 'Erakutsi gehiago',
   });
 }
 
@@ -266,10 +273,10 @@ function jsonp(url, ms = 12000) {
 }
 
 /* ================= buscador de catálogo (Deezer) y YouTube (yt-dlp) ================= */
+/* ================= buscador de catálogo (Deezer) y YouTube ================= */
 async function searchCatalog(q) {
-  const j = await jsonp(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=40`);
-  if (j && j.error) throw new Error('deezer');
-  return reg((j?.data || []).filter((x) => !x.type || x.type === 'track').map(fromDeezer).filter((m) => m.preview));
+  const j = await jsonp(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25`);
+  return reg((j?.data || []).map(fromDeezer).filter((m) => m.preview));
 }
 
 function extractYtId(q) {
@@ -290,7 +297,7 @@ async function searchYouTubeAPI(q) {
     const data = await fetchJSON(`${base}/api/search?q=${encodeURIComponent(q)}`, 20000);
     return reg((Array.isArray(data) ? data : []).filter((x) => x.id).slice(0, 15).map((x) => fromYouTube(x, x.id)));
   } catch (err) {
-    console.warn('Error conectando con el backend yt-dlp:', err);
+    console.warn('No se pudo conectar con el servidor yt-dlp en ' + base, err);
     return [];
   }
 }
@@ -813,8 +820,7 @@ P.audio.addEventListener('error', async () => {
   if (m.src === 'youtube' && !P.triedAlt) {
     P.triedAlt = true;
     try {
-      const proxyUrl = `${backendUrl()}/api/proxy?id=${encodeURIComponent(m.id)}`;
-      P.audio.src = proxyUrl;
+      P.audio.src = `${backendUrl()}/api/proxy?id=${encodeURIComponent(m.id)}`;
       P.audio.play().catch(() => {});
       return;
     } catch { /* nada */ }
