@@ -1,16 +1,12 @@
 'use strict';
-/* senorbak 1.3.0 · reproductor de música (app web instalable) */
+/* senorbak 1.2 · reproductor de música (app web instalable) */
 
-const VERSION = '1.3.0';
+const VERSION = '1.2.3';
 const APP = 'senorbak';
 const AUDIUS = ['https://api.audius.co', 'https://discoveryprovider.audius.co'];
 let audiusBase = AUDIUS[0];
 
-// URL por defecto de tu servidor backend con yt-dlp (puedes cambiarla aquí o desde Ajustes > Administración)
-const MY_BACKEND = 'http://localhost:3000';
-const backendUrl = () => (S.settings?.ytApi || MY_BACKEND).replace(/\/+$/, '');
-
-/* ================= inyección de textos y estilos ================= */
+/* ================= inyección de textos y estilos v1.2 ================= */
 if (typeof I18N !== 'undefined') {
   Object.assign(I18N.es, {
     secYouTube: 'YouTube (completas y descargables)',
@@ -23,10 +19,6 @@ if (typeof I18N !== 'undefined') {
     secFreeH: 'Canciones completas y gratuitas subidas por sus autores.',
     showMore: 'Mostrar más',
     searchYouTube: 'Buscar «{q}» en YouTube',
-    srcYouTubeH: 'Resultados completos y descargables desde YouTube.',
-    srcAudiusH: 'Canciones completas de artistas independientes.',
-    srcDeezerH: 'Catálogo mundial con avances de 30 s.',
-    srcJamendoH: 'Música con licencia libre, casi toda descargable.',
   });
   Object.assign(I18N.eu, {
     secYouTube: 'YouTube (osorik eta deskargagarriak)',
@@ -39,12 +31,17 @@ if (typeof I18N !== 'undefined') {
     secFreeH: 'Egileek igotako abesti osoak eta doakoak.',
     showMore: 'Erakutsi gehiago',
     searchYouTube: 'Bilatu «{q}» YouTube-n',
-    srcYouTubeH: 'Emaitza osoak eta deskargagarriak YouTube-tik.',
-    srcAudiusH: 'Artista independenteen abesti osoak.',
-    srcDeezerH: 'Munduko katalogoa, 30 s-ko aurrebistekin.',
-    srcJamendoH: 'Lizentzia libreko musika.'
   });
 }
+(() => {
+  const st = document.createElement('style');
+  st.textContent = `
+    .sec-sub { color: var(--muted); font-size: 12.5px; margin: -6px 0 10px; }
+    .more-btn { margin: 8px 0 18px; }
+    button.yt-row { width: 100%; text-align: left; cursor: pointer; }
+  `;
+  document.head.appendChild(st);
+})();
 
 /* ================= utilidades ================= */
 const $ = (s, r = document) => r.querySelector(s);
@@ -156,7 +153,7 @@ const DL = new Map();       // key -> % de descarga en curso
 const HOME_CACHE = new Map();
 const UI = {
   tab: 'home', stack: [], libTab: 'favs', scroll: {},
-  search: { q: '', onlyDl: false, genre: '', results: null, open: {}, loading: false, error: false, lastLogged: '' },
+  search: { q: '', onlyDl: false, genre: '', results: null, allCat: false, loading: false, error: false, lastLogged: '' },
   admin: { type: 'all', user: '', unlockedAt: 0 },
 };
 let deferredInstall = null;
@@ -176,6 +173,13 @@ function logEvent(type, detail = '', user = S.me) {
   if (log.length > 5000) log.splice(0, log.length - 5000);
   LS.set('log', log);
 }
+
+/* ================= URL DEL SERVIDOR YT-DLP ================= */
+// Si configuraste un servidor remoto en Ajustes, usará ése. Si no, intenta conectarse al localhost.
+const backendUrl = () => {
+  let url = S.settings.ytApi || 'http://localhost:3000';
+  return url.replace(/\/+$/, '');
+};
 
 /* ================= catálogo ================= */
 const GENRES = ['Pop', 'Electronic', 'Hip-Hop/Rap', 'Latin', 'Rock', 'R&B/Soul', 'Alternative', 'House', 'Techno', 'Lo-Fi',
@@ -218,31 +222,19 @@ function fromJamendo(x) {
 function fromDeezer(x, i) {
   return {
     key: 'dz:' + x.id, src: 'deezer', id: x.id, title: x.title_short || x.title || '', artist: x.artist?.name || '',
-    art: x.album?.cover_medium || x.album?.cover || '', duration: 30, genre: '', preview: x.preview || '',
+    art: x.album?.cover_medium || x.album?.cover || '', duration: 30, full: Number(x.duration) || 0, genre: '', preview: x.preview || '',
     downloadable: false, link: x.link || 'https://www.deezer.com', rank: x.position || i + 1, streamable: !!x.preview,
-    full: Number(x.duration) || 0, album: x.album?.title || '',
   };
 }
 function fromYouTube(x, id) {
-  const vid = id || x.id || x.videoId || (x.url ? new URL(x.url, 'https://youtube.com').searchParams.get('v') : '');
-  const thumb = x.thumbnail || x.thumbnailUrl || (Array.isArray(x.videoThumbnails) ? x.videoThumbnails[0]?.url : '') || (vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : '');
   return {
-    key: 'yt:' + vid, src: 'youtube', id: vid,
+    key: 'yt:' + id, src: 'youtube', id: id,
     title: x.title || '', artist: (x.uploaderName || x.uploader || x.author || 'YouTube').replace(/\s*-\s*Topic$/i, ''),
-    art: thumb, duration: Number(x.duration ?? x.lengthSeconds) || 0,
+    art: x.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    duration: Number(x.duration) || 0,
     genre: '', downloadable: true, streamable: true,
-    link: `https://www.youtube.com/watch?v=${vid}`, ext: 'm4a'
+    link: `https://www.youtube.com/watch?v=${id}`, ext: 'm4a'
   };
-}
-
-/* enlaces para escuchar la canción completa en las apps oficiales */
-function fullLinks(m) {
-  const q = encodeURIComponent(`${m.artist} ${m.title}`.trim());
-  return [
-    ['YouTube', m.src === 'youtube' && m.link ? m.link : `https://www.youtube.com/results?search_query=${q}`],
-    ['Spotify', `https://open.spotify.com/search/${q}`],
-    ['Deezer', m.src === 'deezer' && m.link ? m.link : `https://www.deezer.com/search/${q}`],
-  ];
 }
 const reg = (list) => { list.forEach((m) => TRACKS.set(m.key, m)); return list; };
 const mapAudius = (list) => reg((list || []).map(fromAudius).filter((m) => m.streamable && isSong(m)));
@@ -281,7 +273,7 @@ function jsonp(url, ms = 12000) {
   });
 }
 
-/* ================= buscador de catálogo (Deezer) y YouTube (yt-dlp) ================= */
+/* ================= buscador de catálogo (Deezer) y YouTube ================= */
 async function searchCatalog(q) {
   const j = await jsonp(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25`);
   return reg((j?.data || []).map(fromDeezer).filter((m) => m.preview));
@@ -297,31 +289,22 @@ async function searchYouTubeAPI(q) {
   const directId = extractYtId(q);
   if (directId) {
     try {
-      const info = await fetchJSON(`${base}/api/stream?id=${encodeURIComponent(directId)}`, 20000);
+      const info = await fetchJSON(`${base}/api/stream?id=${encodeURIComponent(directId)}`, 15000);
       return reg([fromYouTube({ title: info.title || 'YouTube', uploaderName: info.uploader || 'YouTube', duration: info.duration }, directId)]);
-    } catch { return []; }
+    } catch (err) { throw err; }
   }
   try {
     const data = await fetchJSON(`${base}/api/search?q=${encodeURIComponent(q)}`, 20000);
     return reg((Array.isArray(data) ? data : []).filter((x) => x.id).slice(0, 15).map((x) => fromYouTube(x, x.id)));
   } catch (err) {
     console.warn('No se pudo conectar con el servidor yt-dlp en ' + base, err);
-    return [];
+    throw err;
   }
 }
 
 async function getYouTubeAudioUrl(videoId) {
-  const base = backendUrl();
-  const data = await fetchJSON(`${base}/api/stream?id=${encodeURIComponent(videoId)}`, 20000);
-  if (!data.url) throw new Error('no-yt-audio');
-  const proxyUrl = `${base}/api/proxy?id=${encodeURIComponent(videoId)}`;
-  return {
-    url: data.url,
-    proxyUrl,
-    urls: [proxyUrl, data.url].filter(Boolean),
-    ext: data.ext || 'm4a',
-    info: data
-  };
+  // Pide al servidor proxy que nos descargue el audio directamente, saltándose las protecciones de IP
+  return { url: `${backendUrl()}/api/proxy?id=${videoId}`, urls: [`${backendUrl()}/api/proxy?id=${videoId}`], ext: 'm4a' };
 }
 
 async function searchSongs(q, { onlyDl = false, genre = '' } = {}) {
@@ -370,7 +353,7 @@ const isFav = (k) => S.lib?.favs.includes(k);
 const isLocal = (k) => !!S.lib && (S.lib.downloads.includes(k) || S.lib.own.includes(k));
 const getTrack = (k) => TRACKS.get(k) || S.lib?.tracks[k];
 function keepMeta(m) { if (m && S.lib) S.lib.tracks[m.key] = m; }
-const canDownload = (m) => !!m && (((m.src === 'audius' || m.src === 'jamendo' || m.src === 'youtube') && m.downloadable) || m.src === 'deezer');
+const canDownload = (m) => !!m && ((m.src === 'audius' || m.src === 'jamendo' || m.src === 'youtube') && m.downloadable || m.src === 'deezer');
 
 function toggleFav(k) {
   const m = getTrack(k); if (!m) return;
@@ -737,7 +720,7 @@ async function loadAndPlay(autoplay = true, startAt = 0) {
       try {
         const yt = await getYouTubeAudioUrl(m.id);
         if (P.cur()?.key !== m.key) return;
-        url = yt.urls[0]; // Usamos la URL del proxy para evitar CORS
+        url = yt.url;
       } catch {
         toast(t('playError'));
         return;
@@ -827,12 +810,7 @@ P.audio.addEventListener('error', async () => {
   }
   if (m.src === 'youtube' && !P.triedAlt) {
     P.triedAlt = true;
-    try {
-      const yt = await getYouTubeAudioUrl(m.id);
-      P.audio.src = yt.urls[1] || yt.url; // Intento 2 con la url directa
-      P.audio.play().catch(() => {});
-      return;
-    } catch { /* nada */ }
+    try { const yt = await getYouTubeAudioUrl(m.id); P.audio.src = yt.url; P.audio.play().catch(() => {}); return; } catch { /* nada */ }
   }
   P.errors++;
   toast(t('playError'));
@@ -960,6 +938,13 @@ function rowHTML(m, ctx, i, opts = {}) {
 function listHTML(list, ctx, opts = {}) {
   LISTS.set(ctx, list);
   return `<div class="list">${list.map((m, i) => rowHTML(m, ctx, i, opts)).join('')}</div>`;
+}
+function section(id, name, sub, list, ctx) {
+  if (!list.length) return '';
+  const rows = listHTML(list, ctx);
+  LISTS.set(ctx, list);
+  return `<section class="src-sec" id="sec-${id}"><div class="sec-h"><h2><span class="src-tag">${esc(name)}</span></h2><span class="muted sm">${esc(songsCount(list.length))}</span></div>
+    <p class="sec-sub">${esc(sub)}</p>${rows}</section>`;
 }
 function cardHTML(m, ctx, i) {
   return `<div class="card${P.cur()?.key === m.key ? ' is-current' : ''}" data-key="${esc(m.key)}">
@@ -1146,7 +1131,7 @@ async function enterApp(u, explicit = false) {
   if (!u.prefs) return showOnboard(u);
   await hydrateCovers();
   restorePlayer();
-  UI.tab = 'home'; UI.stack = []; UI.search = { q: '', onlyDl: false, genre: '', results: null, open: {}, loading: false, error: false, lastLogged: '' };
+  UI.tab = 'home'; UI.stack = []; UI.search = { q: '', onlyDl: false, genre: '', results: null, loading: false, error: false, lastLogged: '' };
   HOME_CACHE.clear();
   mountApp();
   renderView();
@@ -1333,40 +1318,37 @@ function searchResultsHTML() {
   }
 
   const q = s.q.trim();
+  if (s.loading && !s.results) return `<p class="muted pad">${esc(t('searching'))}</p>${skeletonRows()}`;
   if (s.error) return `<div class="empty">${icon('cloud-off')}<p>${esc(navigator.onLine ? t('loadError') : t('needOnline'))}</p><button class="btn" data-act="retry-search">${esc(t('retry'))}</button></div>`;
 
-  const section = (id, name, sub, list, ctx) => {
-    if (list === null) return `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">${esc(name)}</span></h2></div>${skeletonRows(3)}</section>`;
-    if (!list.length) return '';
-
-    const shown = s.open?.[id] ? list : list.slice(0, 8);
-    const rows = listHTML(shown, ctx);
-    LISTS.set(ctx, list);
-    return `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">${esc(name)}</span></h2><span class="muted sm">${esc(songsCount(list.length))}</span></div>
-      <p class="sec-sub">${esc(sub)}</p>${rows}
-      ${list.length > shown.length ? `<button class="btn btn-ghost wide more-btn" data-act="more-src" data-id="${id}">${esc(t('showMore'))}</button>` : ''}</section>`;
-  };
-
-  const ytHTML = s.genre ? '' : section('yt', 'YouTube', t('secYouTubeH'), s.results?.yt, 'search-yt');
   const auList = s.results?.free ? s.results.free.filter((m) => m.src === 'audius') : null;
   const jmList = s.results?.free ? s.results.free.filter((m) => m.src === 'jamendo') : null;
   const dzList = s.results?.catalog;
-
-  const auHTML = section('au', 'Audius', q ? t('srcAudiusH') : t('trendingIn', { genre: gLabel(s.genre) }), auList, 'search');
-  const dzHTML = (s.onlyDl || s.genre) ? '' : section('dz', 'Deezer', t('srcDeezerH'), dzList, 'search-cat');
-  const jmHTML = section('jm', 'Jamendo', t('srcJamendoH'), jmList, 'search-jm');
-
+  
   const allDone = s.results?.yt !== null && s.results?.catalog !== null && s.results?.free !== null;
   const allEmpty = allDone && !(s.results?.yt?.length) && !(dzList?.length) && !(s.results?.free?.length);
 
-  if (allEmpty) {
+  if (allEmpty && s.results?.yt !== false) {
     const ytExtLink = q ? `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div>
       <p class="sec-sub">${esc(t('secYouTubeH'))}</p>
       <a class="yt-row" href="https://www.youtube.com/results?search_query=${encodeURIComponent(q)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('searchYouTube', { q }))}</span>${icon('chevron-right')}</a></section>` : '';
     return `<div class="empty">${icon('search')}<p>${esc(t('noResults', { q: q || gLabel(s.genre) }))}</p><p class="muted">${esc(t('noResultsH'))}</p></div>${ytExtLink}`;
   }
 
-  return ytHTML + auHTML + dzHTML + jmHTML + `<p class="fine">${esc(t('sourcesNote'))}</p>`;
+  let ytHTML = '';
+  if (s.results?.yt === false) {
+    ytHTML = `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div><p class="sec-sub">${esc(t('secYouTubeH'))}</p><div class="notice slim" style="margin-bottom:18px">${icon('cloud-off')}<span>No se ha podido conectar con el servidor yt-dlp en: <b>${esc(backendUrl())}</b>. Asegúrate de que está subido a la nube y configurado en los Ajustes de Administración.</span></div></section>`;
+  } else if (s.results?.yt === null && !s.genre) {
+    ytHTML = `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div><p class="sec-sub">${esc(t('secYouTubeH'))}</p>${skeletonRows(3)}</section>`;
+  } else if (s.results?.yt?.length) {
+    ytHTML = section('yt', 'YouTube', t('secYouTubeH'), s.results.yt, 'search-yt');
+  }
+
+  const auHTML = section('au', 'Audius', q ? t('srcAudiusH') : t('trendingIn', { genre: gLabel(s.genre) }), auList || [], 'search');
+  const dzHTML = section('dz', 'Deezer', t('srcDeezerH'), dzList || [], 'search-cat');
+  const jmHTML = section('jm', 'Jamendo', t('srcJamendoH'), jmList || [], 'search-jm');
+
+  return `${ytHTML}${auHTML}${dzHTML}${jmHTML}<p class="fine">${esc(t('sourcesNote'))}</p>`;
 }
 
 function bindSearch() {
@@ -1379,67 +1361,60 @@ function bindSearch() {
   });
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); runSearch(true); } });
 }
+
 const debouncedSearch = debounce(() => runSearch(false), 450);
 let searchSeq = 0;
-
 async function runSearch(commit) {
   const s = UI.search;
   const q = s.q.trim();
   const box = $('#results');
-
-  if (!q && !s.genre) {
-    s.results = null; s.error = false; s.loading = false;
-    if (box) box.innerHTML = searchResultsHTML();
-    return;
-  }
+  if (!q && !s.genre) { s.results = null; s.error = false; s.loading = false; if (box) box.innerHTML = searchResultsHTML(); return; }
   if (q && q.length < 2 && !commit) return;
-
   const seq = ++searchSeq;
-  s.loading = true;
-  s.error = false;
+  s.loading = true; s.error = false; s.open = {};
+  
+  // Ponemos los 3 buscadores a nulo para que la interfaz sepa que están cargando
   s.results = { yt: null, catalog: null, free: null };
-  s.open = {};
-
   if (box) box.innerHTML = searchResultsHTML();
 
-  const refreshHTML = () => {
-    if (seq !== searchSeq || UI.tab !== 'search') return;
-    const b = $('#results'); if (b) b.innerHTML = searchResultsHTML();
-  };
+  const refreshHTML = () => { if (seq === searchSeq && UI.tab === 'search' && !UI.stack.length && $('#results')) $('#results').innerHTML = searchResultsHTML(); };
 
   if (q) {
+    // 1. Lanzamos YouTube por su lado (asíncrono puro)
     if (!s.genre) {
-      searchYouTubeAPI(q).then(r => { s.results.yt = r || []; refreshHTML(); })
-        .catch(() => { s.results.yt = []; refreshHTML(); });
+      searchYouTubeAPI(q).then(r => { if(seq===searchSeq) { s.results.yt = r || []; refreshHTML(); } })
+        .catch(() => { if(seq===searchSeq) { s.results.yt = false; refreshHTML(); } });
     } else {
       s.results.yt = []; refreshHTML();
     }
-
-    if (!s.onlyDl && !s.genre) {
-      searchCatalog(q).then(r => { s.results.catalog = r || []; refreshHTML(); })
-        .catch(() => { s.results.catalog = []; refreshHTML(); });
-    } else {
-      s.results.catalog = []; refreshHTML();
-    }
-
-    searchSongs(q, { onlyDl: s.onlyDl, genre: s.genre })
-      .then(r => { s.results.free = r || []; refreshHTML(); })
-      .catch(() => { s.results.free = []; refreshHTML(); });
+    
+    // 2. Lanzamos Deezer por su lado
+    searchCatalog(q).then(r => { if(seq===searchSeq) { s.results.catalog = r || []; refreshHTML(); } })
+      .catch(() => { if(seq===searchSeq) { s.results.catalog = []; refreshHTML(); } });
+      
+    // 3. Lanzamos Audius (Cuando responda, quitamos el loading general)
+    searchSongs(q, { onlyDl: s.onlyDl, genre: s.genre }).then(r => {
+       if(seq===searchSeq) {
+         s.results.free = r || [];
+         s.loading = false;
+         refreshHTML();
+         if (q.toLowerCase() !== s.lastLogged) {
+           s.lastLogged = q.toLowerCase();
+           logEvent('search', q + (s.genre ? ` [${s.genre}]` : '') + (s.onlyDl ? ' [dl]' : ''));
+           S.lib.recent = [q, ...(S.lib.recent || []).filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 10);
+           saveLib();
+         }
+       }
+    }).catch(() => { if(seq===searchSeq) { s.results.free = []; s.loading = false; s.error = true; refreshHTML(); } });
 
   } else {
-    s.results.yt = [];
-    s.results.catalog = [];
-    audius('/tracks/trending', { genre: s.genre, time: 'week', limit: 50 }).then(mapAudius).then(list => {
-      s.results.free = s.onlyDl ? list.filter((m) => m.downloadable) : list;
-      refreshHTML();
-    }).catch(() => { s.results.free = []; refreshHTML(); });
-  }
-
-  if (q && q.toLowerCase() !== s.lastLogged) {
-    s.lastLogged = q.toLowerCase();
-    logEvent('search', q + (s.genre ? ` [${s.genre}]` : '') + (s.onlyDl ? ' [dl]' : ''));
-    S.lib.recent = [q, ...(S.lib.recent || []).filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 10);
-    saveLib();
+    // Búsquedas de solo género (solo Audius)
+    s.results.yt = []; s.results.catalog = [];
+    audius('/tracks/trending', { genre: s.genre, time: 'week', limit: 50 }).then(list => {
+      let mapped = mapAudius(list);
+      if (s.onlyDl) mapped = mapped.filter((m) => m.downloadable);
+      if(seq===searchSeq) { s.results.free = mapped; s.loading = false; refreshHTML(); }
+    }).catch(() => { if(seq===searchSeq) { s.results.free = []; s.loading = false; s.error = true; refreshHTML(); } });
   }
 }
 
@@ -1456,7 +1431,7 @@ function renderTop() {
         <button class="icon-btn outline" data-act="refresh-top" aria-label="${esc(t('refresh'))}">${icon('refresh')}</button>
       </div>
     </div>
-    ${c.src === 'deezer' ? `<p class="notice slim">${icon('download')}<span>${esc(t('secCatalogH'))}</span></p>` : `<p class="notice slim">${esc(t('topFallback'))}</p>`}
+    ${c.src === 'deezer' ? `<p class="notice slim">${icon('lock')}<span>${esc(t('topNote'))}</span></p>` : `<p class="notice slim">${esc(t('topFallback'))}</p>`}
     ${listHTML(c.items, 'top', { rank: true })}
     <p class="fine">${esc(c.src === 'deezer' ? t('topSource') : t('topSourceAudius'))}</p>`;
 }
@@ -1544,8 +1519,8 @@ function renderSettings() {
     <div class="group">
       <button class="set-row link-row" data-act="open-admin"><span>${icon('shield')}${esc(t('adminPanel'))}</span>${icon('chevron-right')}</button>
       <div class="set-row"><span>${esc(t('topInterval'))}</span><div class="seg sm">${[1, 6, 12, 24].map((h) => segBtn('set-chart-h', String(h), String(S.settings.chartHours), t('hours', { n: h }))).join('')}</div></div>
-      <div class="set-col"><label for="set-yt">Servidor yt-dlp (URL backend)</label><input class="input" id="set-yt" placeholder="${esc(MY_BACKEND)}" value="${esc(S.settings.ytApi || '')}" autocomplete="off" spellcheck="false"><small class="muted">Ej: https://tu-backend.onrender.com</small></div>
       <div class="set-col"><label for="set-jam">${esc(t('jamendo'))}</label><input class="input" id="set-jam" value="${esc(S.settings.jamendoId)}" autocomplete="off" spellcheck="false"><small class="muted">${esc(t('jamendoH'))}</small></div>
+      <div class="set-col"><label for="set-ytapi">Servidor yt-dlp (URL del backend)</label><input class="input" id="set-ytapi" placeholder="http://localhost:3000" value="${esc(S.settings.ytApi)}" autocomplete="off" spellcheck="false"><small class="muted">Tu servidor donde alojas yt-dlp.</small></div>
     </div>` : ''}
     <div class="group">
       <button class="set-row link-row" data-act="switch-profile"><span>${esc(t('switchProfile'))}</span>${icon('user')}</button>
@@ -1683,23 +1658,21 @@ function updatePlayerUI() {
   mini.hidden = !m;
   document.body.classList.toggle('has-mini', !!m);
   if (!m) return;
-  const isPrev = m.src === 'deezer' && !isLocal(m.key);
   $('#mini-art').innerHTML = artHTML(m, 'art');
   $('#mini-t').textContent = m.title;
-  $('#mini-a').textContent = isPrev ? `${m.artist} · ${t('previewOnly')}` : m.artist;
+  $('#mini-a').textContent = m.src === 'deezer' ? `${m.artist} · ${t('previewOnly')}` : m.artist;
   $('#pl-art').innerHTML = artHTML(m, 'big-art');
   const bgSrc = COVERS.get(m.key) || m.art;
   $('#pl-bg').style.backgroundImage = bgSrc ? `url("${bgSrc.replace(/"/g, '%22')}")` : 'none';
   $('#pl-bg').style.setProperty('--tint', tintFor(m.title));
   $('#pl-t').textContent = m.title;
-  $('#pl-a').textContent = isPrev ? `${m.artist} · ${t('previewOnly')}` : m.artist;
+  $('#pl-a').textContent = m.src === 'deezer' ? `${m.artist} · ${t('previewOnly')}` : m.artist;
   $('#pl-ctx').textContent = P.ctx || '';
   const fav = isFav(m.key);
   const fb = $('#pl-fav'); fb.innerHTML = icon(fav ? 'heart-fill' : 'heart'); fb.classList.toggle('on', fav); fb.setAttribute('aria-label', fav ? t('removeFav') : t('addFav'));
   $('#pl-dl').innerHTML = m.src === 'own' ? '' : dlState(m);
   const full = $('#pl-full');
-  full.hidden = !isPrev;
-  if (isPrev) full.innerHTML = `<span>${esc(t('fullIn'))}</span>${fullLinks(m).map(([n, u]) => `<a class="chip" href="${esc(u)}" target="_blank" rel="noopener">${esc(n)}</a>`).join('')}`;
+  full.hidden = m.src !== 'deezer';
   $('#pl-shuf').classList.toggle('on', P.shuffle);
   $('#pl-shuf').setAttribute('aria-pressed', P.shuffle);
   const rep = $('#pl-rep'); rep.classList.toggle('on', P.repeat !== 'off'); rep.setAttribute('aria-pressed', P.repeat !== 'off');
@@ -1742,8 +1715,7 @@ function openSheet(id, html) {
 }
 function setSheet(id, html) { const el = $('#' + id); if (el) $('.sheet-body', el).innerHTML = html; }
 function sheetHead(m) {
-  const isPrev = m.src === 'deezer' && !isLocal(m.key);
-  return `<div class="sheet-head">${artHTML(m)}<span class="meta"><b>${esc(m.title)}</b><span>${esc(m.artist)}${isPrev ? ' · ' + esc(t('previewOnly')) : ''}</span></span></div>`;
+  return `<div class="sheet-head">${artHTML(m)}<span class="meta"><b>${esc(m.title)}</b><span>${esc(m.artist)}${m.src === 'deezer' ? ' · ' + esc(t('previewOnly')) : ''}</span></span></div>`;
 }
 const sheetBtn = (act, ic, label, extra = '') => `<button class="sheet-item" data-act="${act}" ${extra}>${icon(ic)}<span>${esc(label)}</span></button>`;
 
@@ -1764,11 +1736,9 @@ function openTrackMenu(k, ctx, i) {
     if (canShareFiles()) items.push(sheetBtn('m-share', 'share', t('shareFile'), kk));
     if (S.users.length > 1) items.push(sheetBtn('m-profile', 'user', t('toProfile'), kk));
     items.push(sheetBtn('m-undl', 'trash', t('removeDownload'), kk));
-  } else if (m.src === 'deezer') {
-    items.push(sheetBtn('m-dl-yt', 'download', DL.has(k) ? t('downloading', { p: DL.get(k) }) : t('dlFromYT'), kk));
   } else if (canDownload(m)) {
     items.push(sheetBtn('m-dl', 'download', DL.has(k) ? t('downloading', { p: DL.get(k) }) : t('download'), kk));
-  } else {
+  } else if (m.src !== 'deezer') {
     items.push(`<div class="sheet-item disabled">${icon('lock')}<span>${esc(t('notDownloadable'))}</span></div>`);
   }
   if (ctx && ctx.startsWith('pl:')) {
@@ -1780,8 +1750,7 @@ function openTrackMenu(k, ctx, i) {
   }
   if (m.src === 'deezer') items.push(sheetBtn('m-findfree', 'search', t('findFree'), kk));
   if (m.src === 'own') items.push(sheetBtn('m-delown', 'trash', t('deleteSong'), kk));
-  if (m.link && m.src !== 'own' && m.src !== 'deezer') items.push(`<a class="sheet-item" href="${esc(m.link)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('openIn', { src: { audius: 'Audius', deezer: 'Deezer', jamendo: 'Jamendo', youtube: 'YouTube' }[m.src] || m.src }))}</span></a>`);
-  if (m.src === 'deezer') items.push(...fullLinks(m).map(([n, u]) => `<a class="sheet-item" href="${esc(u)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('listenFullIn', { app: n }))}</span></a>`));
+  if (m.link && m.src !== 'own' && m.src !== 'deezer') items.push(`<a class="sheet-item" href="${esc(m.link)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('openIn', { src: { audius: 'Audius', deezer: 'Deezer', jamendo: 'Jamendo' }[m.src] || m.src }))}</span></a>`);
   openSheet('track-sheet', sheetHead(m) + items.join(''));
 }
 function playlistPicker(k) {
@@ -1879,7 +1848,7 @@ const ACT = {
     const m = getTrack(el.dataset.key); await closeTop();
     while (UI.stack.length && LAYERS.length) await closeTop();
     if (!$('#player').hidden) await closeTop();
-    UI.tab = 'search'; UI.search.q = `${m.artist} ${m.title}`.trim(); UI.search.genre = ''; renderView(false); runSearch(true);
+    UI.tab = 'search'; UI.search.q = `${m.title}`; UI.search.genre = ''; renderView(false); runSearch(true);
   },
   'm-delown': async (el) => {
     const m = getTrack(el.dataset.key); await closeTop();
@@ -1904,13 +1873,13 @@ const ACT = {
     S.lib.playlists = S.lib.playlists.filter((x) => x.id !== p.id); saveLib();
     await closeTop();
   },
-  'more-src': (el) => { UI.search.open = { ...(UI.search.open || {}), [el.dataset.id]: true }; const b = $('#results'); if (b) b.innerHTML = searchResultsHTML(); },
   'toggle-onlydl': () => { UI.search.onlyDl = !UI.search.onlyDl; renderView(); runSearch(true); },
   genre: (el) => { UI.search.genre = el.dataset.g; if (UI.tab !== 'search') UI.tab = 'search'; renderView(false); runSearch(true); },
   'clear-q': () => { UI.search.q = ''; UI.search.results = null; renderView(); $('#q')?.focus(); runSearch(true); },
   'recent-q': (el) => { UI.search.q = el.dataset.q; renderView(); runSearch(true); },
   'clear-recent': () => { S.lib.recent = []; saveLib(); renderView(); },
   'retry-search': () => runSearch(true),
+  'more-src': (el) => { UI.search.open = { ...(UI.search.open || {}), [el.dataset.id]: true }; const b = $('#results'); if (b) b.innerHTML = searchResultsHTML(); },
   'retry-home': () => { renderView(); },
   'refresh-top': async (el) => { el.classList.add('spin'); await refreshChart(true); renderView(); },
   'open-settings': () => { if (UI.stack[UI.stack.length - 1]?.type === 'settings') return; openPage({ type: 'settings' }); },
@@ -1976,8 +1945,8 @@ function ctxLabel(ctx) {
   if (!ctx) return '';
   if (ctx.startsWith('home:')) { const s = homeSecs.find((x) => 'home:' + x.id === ctx); return s ? s.title : t('tab_home'); }
   if (ctx.startsWith('pl:')) return S.lib.playlists.find((p) => p.id === ctx.slice(3))?.name || t('playlists');
-  const qLabel = UI.search.q ? `«${UI.search.q}»` : t('tab_search');
-  return { search: qLabel, 'search-yt': qLabel, 'search-cat': qLabel, top: t('topTitle'), favs: t('favorites'), downloads: t('downloads'), own: t('myMusic'), queue: t('queue') }[ctx] || '';
+  if (ctx.startsWith('search')) return UI.search.q ? `«${UI.search.q}»` : t('tab_search');
+  return { search: UI.search.q ? `«${UI.search.q}»` : t('tab_search'), top: t('topTitle'), favs: t('favorites'), downloads: t('downloads'), own: t('myMusic'), queue: t('queue') }[ctx] || '';
 }
 
 document.addEventListener('click', (e) => {
@@ -1993,7 +1962,7 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'own-files') { importFiles(e.target.files); e.target.value = ''; }
   if (e.target.id === 'set-hide') { S.settings.hideMixes = e.target.checked; saveSettings(); HOME_CACHE.clear(); toast(t('saved')); }
   if (e.target.id === 'set-jam') { S.settings.jamendoId = e.target.value.trim(); saveSettings(); toast(t('saved')); }
-  if (e.target.id === 'set-yt') { S.settings.ytApi = e.target.value.trim(); saveSettings(); toast(t('saved')); }
+  if (e.target.id === 'set-ytapi') { S.settings.ytApi = e.target.value.trim(); saveSettings(); toast(t('saved')); }
 });
 document.addEventListener('input', (e) => {
   if (e.target.id === 'pl-range') {
