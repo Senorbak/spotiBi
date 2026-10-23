@@ -1,47 +1,38 @@
 'use strict';
 /* senorbak 1.2 · reproductor de música (app web instalable) */
 
-const VERSION = '1.2.3';
+const VERSION = '1.2.4';
 const APP = 'senorbak';
 const AUDIUS = ['https://api.audius.co', 'https://discoveryprovider.audius.co'];
 let audiusBase = AUDIUS[0];
 
-/* ================= inyección de textos y estilos v1.2 ================= */
+/* ================= inyección de textos de seguridad ================= */
 if (typeof I18N !== 'undefined') {
   Object.assign(I18N.es, {
-    secYouTube: 'YouTube (completas y descargables)',
-    secYouTubeH: 'Reproduce o descarga el audio completo directamente en la app.',
+    secYouTube: 'YouTube',
+    secYouTubeH: 'Reproduce o descarga el audio directamente en la app.',
+    searchYouTube: 'Buscar «{q}» en YouTube',
     dlFromYT: 'Descargar completa (vía YouTube)',
     ytFetching: 'Obteniendo audio de YouTube…',
-    secCatalog: 'Catálogo mundial (Deezer)',
-    secCatalogH: 'Avances de 30 s o descárgalas completas vía YouTube con el icono de descarga.',
-    secFree: 'Artistas independientes (Audius)',
-    secFreeH: 'Canciones completas y gratuitas subidas por sus autores.',
-    showMore: 'Mostrar más',
-    searchYouTube: 'Buscar «{q}» en YouTube',
+    secCatalog: 'Todas las canciones',
+    secCatalogH: 'Avances de 30 s. Tócala y elige dónde escucharla completa.',
+    secFree: 'Completas y gratis',
+    secFreeH: 'Artistas independientes. Algunas se pueden descargar.',
+    showMore: 'Ver más canciones',
   });
   Object.assign(I18N.eu, {
-    secYouTube: 'YouTube (osorik eta deskargagarriak)',
-    secYouTubeH: 'Erreproduzitu edo deskargatu audio osoa zuzenean aplikazioan.',
+    secYouTube: 'YouTube',
+    secYouTubeH: 'Erreproduzitu edo deskargatu audioa zuzenean aplikazioan.',
+    searchYouTube: 'Bilatu «{q}» YouTube-n',
     dlFromYT: 'Deskargatu osorik (YouTube bidez)',
     ytFetching: 'YouTube-tik audioa lortzen…',
-    secCatalog: 'Munduko katalogoa (Deezer)',
-    secCatalogH: '30 s-ko aurrebistak edo deskargatu osorik YouTube bidez.',
-    secFree: 'Artista independenteak (Audius)',
-    secFreeH: 'Egileek igotako abesti osoak eta doakoak.',
-    showMore: 'Erakutsi gehiago',
-    searchYouTube: 'Bilatu «{q}» YouTube-n',
+    secCatalog: 'Abesti guztiak',
+    secCatalogH: '30 s-ko aurrebistak. Sakatu eta aukeratu non entzun osorik.',
+    secFree: 'Osorik eta doan',
+    secFreeH: 'Artista independenteak. Batzuk deskarga daitezke.',
+    showMore: 'Abesti gehiago ikusi',
   });
 }
-(() => {
-  const st = document.createElement('style');
-  st.textContent = `
-    .sec-sub { color: var(--muted); font-size: 12.5px; margin: -6px 0 10px; }
-    .more-btn { margin: 8px 0 18px; }
-    button.yt-row { width: 100%; text-align: left; cursor: pointer; }
-  `;
-  document.head.appendChild(st);
-})();
 
 /* ================= utilidades ================= */
 const $ = (s, r = document) => r.querySelector(s);
@@ -174,8 +165,7 @@ function logEvent(type, detail = '', user = S.me) {
   LS.set('log', log);
 }
 
-/* ================= URL DEL SERVIDOR YT-DLP ================= */
-// Si configuraste un servidor remoto en Ajustes, usará ése. Si no, intenta conectarse al localhost.
+/* ================= SERVIDOR BACKEND ================= */
 const backendUrl = () => {
   let url = S.settings.ytApi || 'http://localhost:3000';
   return url.replace(/\/+$/, '');
@@ -236,6 +226,17 @@ function fromYouTube(x, id) {
     link: `https://www.youtube.com/watch?v=${id}`, ext: 'm4a'
   };
 }
+
+/* enlaces para escuchar la canción completa en las apps oficiales */
+function fullLinks(m) {
+  const q = encodeURIComponent(`${m.artist} ${m.title}`.trim());
+  return [
+    ['YouTube', `https://www.youtube.com/results?search_query=${q}`],
+    ['Spotify', `https://open.spotify.com/search/${q}`],
+    ['Deezer', m.src === 'deezer' && m.link ? m.link : `https://www.deezer.com/search/${q}`],
+  ];
+}
+
 const reg = (list) => { list.forEach((m) => TRACKS.set(m.key, m)); return list; };
 const mapAudius = (list) => reg((list || []).map(fromAudius).filter((m) => m.streamable && isSong(m)));
 
@@ -273,12 +274,7 @@ function jsonp(url, ms = 12000) {
   });
 }
 
-/* ================= buscador de catálogo (Deezer) y YouTube ================= */
-async function searchCatalog(q) {
-  const j = await jsonp(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25`);
-  return reg((j?.data || []).map(fromDeezer).filter((m) => m.preview));
-}
-
+/* ================= yt-dlp backend ================= */
 function extractYtId(q) {
   const m = String(q).match(/(?:(?:music\.)?youtube\.com\/(?:watch\?.*v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return m ? m[1] : null;
@@ -303,8 +299,12 @@ async function searchYouTubeAPI(q) {
 }
 
 async function getYouTubeAudioUrl(videoId) {
-  // Pide al servidor proxy que nos descargue el audio directamente, saltándose las protecciones de IP
   return { url: `${backendUrl()}/api/proxy?id=${videoId}`, urls: [`${backendUrl()}/api/proxy?id=${videoId}`], ext: 'm4a' };
+}
+
+async function searchCatalog(q) {
+  const j = await jsonp(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25`);
+  return reg((j?.data || []).map(fromDeezer).filter((m) => m.preview));
 }
 
 async function searchSongs(q, { onlyDl = false, genre = '' } = {}) {
@@ -808,10 +808,6 @@ P.audio.addEventListener('error', async () => {
     P.triedAlt = true;
     try { const j = await jsonp(`https://api.deezer.com/track/${m.id}`); if (j.preview) { m.preview = j.preview; P.audio.src = j.preview; P.audio.play().catch(() => {}); return; } } catch { /* nada */ }
   }
-  if (m.src === 'youtube' && !P.triedAlt) {
-    P.triedAlt = true;
-    try { const yt = await getYouTubeAudioUrl(m.id); P.audio.src = yt.url; P.audio.play().catch(() => {}); return; } catch { /* nada */ }
-  }
   P.errors++;
   toast(t('playError'));
   if (P.errors < 3 && P.queue.length > 1) setTimeout(() => nextTrack(true), 1200);
@@ -938,13 +934,6 @@ function rowHTML(m, ctx, i, opts = {}) {
 function listHTML(list, ctx, opts = {}) {
   LISTS.set(ctx, list);
   return `<div class="list">${list.map((m, i) => rowHTML(m, ctx, i, opts)).join('')}</div>`;
-}
-function section(id, name, sub, list, ctx) {
-  if (!list.length) return '';
-  const rows = listHTML(list, ctx);
-  LISTS.set(ctx, list);
-  return `<section class="src-sec" id="sec-${id}"><div class="sec-h"><h2><span class="src-tag">${esc(name)}</span></h2><span class="muted sm">${esc(songsCount(list.length))}</span></div>
-    <p class="sec-sub">${esc(sub)}</p>${rows}</section>`;
 }
 function cardHTML(m, ctx, i) {
   return `<div class="card${P.cur()?.key === m.key ? ' is-current' : ''}" data-key="${esc(m.key)}">
@@ -1131,7 +1120,7 @@ async function enterApp(u, explicit = false) {
   if (!u.prefs) return showOnboard(u);
   await hydrateCovers();
   restorePlayer();
-  UI.tab = 'home'; UI.stack = []; UI.search = { q: '', onlyDl: false, genre: '', results: null, loading: false, error: false, lastLogged: '' };
+  UI.tab = 'home'; UI.stack = []; UI.search = { q: '', onlyDl: false, genre: '', results: null, allCat: false, loading: false, error: false, lastLogged: '' };
   HOME_CACHE.clear();
   mountApp();
   renderView();
@@ -1305,7 +1294,6 @@ function renderSearch() {
     </div>
     <div id="results">${searchResultsHTML()}</div>`;
 }
-
 function searchResultsHTML() {
   const s = UI.search;
   if (!s.q && !s.genre) {
@@ -1316,41 +1304,30 @@ function searchResultsHTML() {
       <div class="tiles">${GENRES.map((g) => `<button class="tile" data-act="genre" data-g="${esc(g)}" style="--tint:${tintFor(g)}"><span>${esc(gLabel(g))}</span></button>`).join('')}</div>
       <p class="fine">${esc(t('sourcesNote'))}</p>`;
   }
-
   const q = s.q.trim();
-  if (s.loading && !s.results) return `<p class="muted pad">${esc(t('searching'))}</p>${skeletonRows()}`;
-  if (s.error) return `<div class="empty">${icon('cloud-off')}<p>${esc(navigator.onLine ? t('loadError') : t('needOnline'))}</p><button class="btn" data-act="retry-search">${esc(t('retry'))}</button></div>`;
-
-  const auList = s.results?.free ? s.results.free.filter((m) => m.src === 'audius') : null;
-  const jmList = s.results?.free ? s.results.free.filter((m) => m.src === 'jamendo') : null;
-  const dzList = s.results?.catalog;
   
-  const allDone = s.results?.yt !== null && s.results?.catalog !== null && s.results?.free !== null;
-  const allEmpty = allDone && !(s.results?.yt?.length) && !(dzList?.length) && !(s.results?.free?.length);
+  // YouTube link renderizado al instante y arriba del todo
+  const ytHTML = q && !s.genre && !s.onlyDl ? `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div>
+    <p class="sec-sub">${esc(t('secYouTubeH'))}</p>
+    <a class="yt-row" href="https://www.youtube.com/results?search_query=${encodeURIComponent(q)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('searchYouTube', { q }))}</span>${icon('chevron-right')}</a></section>` : '';
 
-  if (allEmpty && s.results?.yt !== false) {
-    const ytExtLink = q ? `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div>
-      <p class="sec-sub">${esc(t('secYouTubeH'))}</p>
-      <a class="yt-row" href="https://www.youtube.com/results?search_query=${encodeURIComponent(q)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('searchYouTube', { q }))}</span>${icon('chevron-right')}</a></section>` : '';
-    return `<div class="empty">${icon('search')}<p>${esc(t('noResults', { q: q || gLabel(s.genre) }))}</p><p class="muted">${esc(t('noResultsH'))}</p></div>${ytExtLink}`;
-  }
-
-  let ytHTML = '';
-  if (s.results?.yt === false) {
-    ytHTML = `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div><p class="sec-sub">${esc(t('secYouTubeH'))}</p><div class="notice slim" style="margin-bottom:18px">${icon('cloud-off')}<span>No se ha podido conectar con el servidor yt-dlp en: <b>${esc(backendUrl())}</b>. Asegúrate de que está subido a la nube y configurado en los Ajustes de Administración.</span></div></section>`;
-  } else if (s.results?.yt === null && !s.genre) {
-    ytHTML = `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">YouTube</span></h2></div><p class="sec-sub">${esc(t('secYouTubeH'))}</p>${skeletonRows(3)}</section>`;
-  } else if (s.results?.yt?.length) {
-    ytHTML = section('yt', 'YouTube', t('secYouTubeH'), s.results.yt, 'search-yt');
-  }
-
-  const auHTML = section('au', 'Audius', q ? t('srcAudiusH') : t('trendingIn', { genre: gLabel(s.genre) }), auList || [], 'search');
-  const dzHTML = section('dz', 'Deezer', t('srcDeezerH'), dzList || [], 'search-cat');
-  const jmHTML = section('jm', 'Jamendo', t('srcJamendoH'), jmList || [], 'search-jm');
-
-  return `${ytHTML}${auHTML}${dzHTML}${jmHTML}<p class="fine">${esc(t('sourcesNote'))}</p>`;
+  if (s.loading && !s.results) return `${ytHTML}<p class="muted pad">${esc(t('searching'))}</p>${skeletonRows()}`;
+  if (s.error) return `${ytHTML}<div class="empty">${icon('cloud-off')}<p>${esc(navigator.onLine ? t('loadError') : t('needOnline'))}</p><button class="btn" data-act="retry-search">${esc(t('retry'))}</button></div>`;
+  
+  const cat = s.results?.catalog || [], free = s.results?.free || [];
+  if (!cat.length && !free.length) return `${ytHTML}<div class="empty">${icon('search')}<p>${esc(t('noResults', { q: q || gLabel(s.genre) }))}</p><p class="muted">${esc(t('noResultsH'))}</p></div>`;
+  
+  const shownCat = s.allCat ? cat : cat.slice(0, 10);
+  const catHTML = cat.length ? `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">${esc(t('secCatalog'))}</span></h2><span class="muted sm">${esc(songsCount(cat.length))}</span></div>
+    <p class="sec-sub">${esc(t('secCatalogH'))}</p>${listHTML(shownCat, 'search-cat')}
+    ${cat.length > shownCat.length ? `<button class="btn btn-ghost wide more-btn" data-act="more-cat">${esc(t('showMore'))}</button>` : ''}</section>` : '';
+  
+  const freeTitle = q ? t('secFree') : t('trendingIn', { genre: gLabel(s.genre) });
+  const freeHTML = free.length ? `<section class="src-sec"><div class="sec-h"><h2><span class="src-tag">${esc(freeTitle)}</span></h2><span class="muted sm">${esc(songsCount(free.length))}</span></div>
+    <p class="sec-sub">${esc(t('secFreeH'))}</p>${listHTML(free, 'search')}</section>` : '';
+    
+  return `${ytHTML}${catHTML}${freeHTML}<p class="fine">${esc(t('sourcesNote'))}</p>`;
 }
-
 function bindSearch() {
   const inp = $('#q'); if (!inp) return;
   if (!UI.search.q && !UI.search.genre && !UI.searchFocused) { UI.searchFocused = true; }
@@ -1361,7 +1338,6 @@ function bindSearch() {
   });
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); runSearch(true); } });
 }
-
 const debouncedSearch = debounce(() => runSearch(false), 450);
 let searchSeq = 0;
 async function runSearch(commit) {
@@ -1371,51 +1347,35 @@ async function runSearch(commit) {
   if (!q && !s.genre) { s.results = null; s.error = false; s.loading = false; if (box) box.innerHTML = searchResultsHTML(); return; }
   if (q && q.length < 2 && !commit) return;
   const seq = ++searchSeq;
-  s.loading = true; s.error = false; s.open = {};
-  
-  // Ponemos los 3 buscadores a nulo para que la interfaz sepa que están cargando
-  s.results = { yt: null, catalog: null, free: null };
+  s.loading = true; s.error = false; s.results = null; s.allCat = false;
   if (box) box.innerHTML = searchResultsHTML();
-
-  const refreshHTML = () => { if (seq === searchSeq && UI.tab === 'search' && !UI.stack.length && $('#results')) $('#results').innerHTML = searchResultsHTML(); };
-
-  if (q) {
-    // 1. Lanzamos YouTube por su lado (asíncrono puro)
-    if (!s.genre) {
-      searchYouTubeAPI(q).then(r => { if(seq===searchSeq) { s.results.yt = r || []; refreshHTML(); } })
-        .catch(() => { if(seq===searchSeq) { s.results.yt = false; refreshHTML(); } });
+  try {
+    let res;
+    if (q) {
+      const [cat, free] = await Promise.allSettled([
+        s.onlyDl || s.genre ? Promise.resolve([]) : searchCatalog(q),
+        searchSongs(q, { onlyDl: s.onlyDl, genre: s.genre }),
+      ]);
+      if (cat.status === 'rejected' && free.status === 'rejected') throw free.reason;
+      res = { catalog: cat.value || [], free: free.value || [] };
     } else {
-      s.results.yt = []; refreshHTML();
+      let list = mapAudius(await audius('/tracks/trending', { genre: s.genre, time: 'week', limit: 50 }));
+      if (s.onlyDl) list = list.filter((m) => m.downloadable);
+      res = { catalog: [], free: list };
     }
-    
-    // 2. Lanzamos Deezer por su lado
-    searchCatalog(q).then(r => { if(seq===searchSeq) { s.results.catalog = r || []; refreshHTML(); } })
-      .catch(() => { if(seq===searchSeq) { s.results.catalog = []; refreshHTML(); } });
-      
-    // 3. Lanzamos Audius (Cuando responda, quitamos el loading general)
-    searchSongs(q, { onlyDl: s.onlyDl, genre: s.genre }).then(r => {
-       if(seq===searchSeq) {
-         s.results.free = r || [];
-         s.loading = false;
-         refreshHTML();
-         if (q.toLowerCase() !== s.lastLogged) {
-           s.lastLogged = q.toLowerCase();
-           logEvent('search', q + (s.genre ? ` [${s.genre}]` : '') + (s.onlyDl ? ' [dl]' : ''));
-           S.lib.recent = [q, ...(S.lib.recent || []).filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 10);
-           saveLib();
-         }
-       }
-    }).catch(() => { if(seq===searchSeq) { s.results.free = []; s.loading = false; s.error = true; refreshHTML(); } });
-
-  } else {
-    // Búsquedas de solo género (solo Audius)
-    s.results.yt = []; s.results.catalog = [];
-    audius('/tracks/trending', { genre: s.genre, time: 'week', limit: 50 }).then(list => {
-      let mapped = mapAudius(list);
-      if (s.onlyDl) mapped = mapped.filter((m) => m.downloadable);
-      if(seq===searchSeq) { s.results.free = mapped; s.loading = false; refreshHTML(); }
-    }).catch(() => { if(seq===searchSeq) { s.results.free = []; s.loading = false; s.error = true; refreshHTML(); } });
+    if (seq !== searchSeq) return;
+    s.results = res; s.loading = false;
+    if (q && q.toLowerCase() !== s.lastLogged) {
+      s.lastLogged = q.toLowerCase();
+      logEvent('search', q + (s.genre ? ` [${s.genre}]` : '') + (s.onlyDl ? ' [dl]' : ''));
+      S.lib.recent = [q, ...(S.lib.recent || []).filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 10);
+      saveLib();
+    }
+  } catch {
+    if (seq !== searchSeq) return;
+    s.error = true; s.loading = false;
   }
+  if (UI.tab === 'search' && !UI.stack.length) { const b = $('#results'); if (b) b.innerHTML = searchResultsHTML(); }
 }
 
 /* --- top --- */
@@ -1519,8 +1479,8 @@ function renderSettings() {
     <div class="group">
       <button class="set-row link-row" data-act="open-admin"><span>${icon('shield')}${esc(t('adminPanel'))}</span>${icon('chevron-right')}</button>
       <div class="set-row"><span>${esc(t('topInterval'))}</span><div class="seg sm">${[1, 6, 12, 24].map((h) => segBtn('set-chart-h', String(h), String(S.settings.chartHours), t('hours', { n: h }))).join('')}</div></div>
+      <div class="set-col"><label for="set-ytapi">Servidor yt-dlp (URL del backend)</label><input class="input" id="set-ytapi" placeholder="Ej: https://mi-backend.onrender.com" value="${esc(S.settings.ytApi || '')}" autocomplete="off" spellcheck="false"></div>
       <div class="set-col"><label for="set-jam">${esc(t('jamendo'))}</label><input class="input" id="set-jam" value="${esc(S.settings.jamendoId)}" autocomplete="off" spellcheck="false"><small class="muted">${esc(t('jamendoH'))}</small></div>
-      <div class="set-col"><label for="set-ytapi">Servidor yt-dlp (URL del backend)</label><input class="input" id="set-ytapi" placeholder="http://localhost:3000" value="${esc(S.settings.ytApi)}" autocomplete="off" spellcheck="false"><small class="muted">Tu servidor donde alojas yt-dlp.</small></div>
     </div>` : ''}
     <div class="group">
       <button class="set-row link-row" data-act="switch-profile"><span>${esc(t('switchProfile'))}</span>${icon('user')}</button>
@@ -1673,6 +1633,7 @@ function updatePlayerUI() {
   $('#pl-dl').innerHTML = m.src === 'own' ? '' : dlState(m);
   const full = $('#pl-full');
   full.hidden = m.src !== 'deezer';
+  if (m.src === 'deezer') full.innerHTML = `<span>${esc(t('fullIn'))}</span>${fullLinks(m).map(([n, u]) => `<a class="chip" href="${esc(u)}" target="_blank" rel="noopener">${esc(n)}</a>`).join('')}`;
   $('#pl-shuf').classList.toggle('on', P.shuffle);
   $('#pl-shuf').setAttribute('aria-pressed', P.shuffle);
   const rep = $('#pl-rep'); rep.classList.toggle('on', P.repeat !== 'off'); rep.setAttribute('aria-pressed', P.repeat !== 'off');
@@ -1741,6 +1702,7 @@ function openTrackMenu(k, ctx, i) {
   } else if (m.src !== 'deezer') {
     items.push(`<div class="sheet-item disabled">${icon('lock')}<span>${esc(t('notDownloadable'))}</span></div>`);
   }
+  if (m.src === 'deezer') items.push(...fullLinks(m).map(([n, u]) => `<a class="sheet-item" href="${esc(u)}" target="_blank" rel="noopener">${icon('external')}<span>${esc(t('listenFullIn', { app: n }))}</span></a>`));
   if (ctx && ctx.startsWith('pl:')) {
     const pid = ctx.slice(3);
     const extra = `${kk} data-pid="${pid}" data-i="${i}"`;
@@ -1815,7 +1777,6 @@ const ACT = {
   'm-queue': async (el) => { const m = getTrack(el.dataset.key); await closeTop(); addToQueue(m); },
   'm-fav': async (el) => { await closeTop(); toggleFav(el.dataset.key); },
   'm-dl': async (el) => { await closeTop(); downloadTrack(el.dataset.key); },
-  'm-dl-yt': async (el) => { await closeTop(); downloadDeezerViaYT(el.dataset.key); },
   'm-undl': async (el) => { await closeTop(); removeDownload(el.dataset.key); },
   'm-phone': async (el) => { await closeTop(); saveToPhone(el.dataset.key); },
   'm-share': async (el) => { await closeTop(); shareFile(el.dataset.key); },
@@ -1962,7 +1923,6 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'own-files') { importFiles(e.target.files); e.target.value = ''; }
   if (e.target.id === 'set-hide') { S.settings.hideMixes = e.target.checked; saveSettings(); HOME_CACHE.clear(); toast(t('saved')); }
   if (e.target.id === 'set-jam') { S.settings.jamendoId = e.target.value.trim(); saveSettings(); toast(t('saved')); }
-  if (e.target.id === 'set-ytapi') { S.settings.ytApi = e.target.value.trim(); saveSettings(); toast(t('saved')); }
 });
 document.addEventListener('input', (e) => {
   if (e.target.id === 'pl-range') {
